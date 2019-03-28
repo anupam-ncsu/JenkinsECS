@@ -1,0 +1,185 @@
+
+Description:
+    This template deploys an jenkins MASTER ECS cluster to the provided VPC and subnets using an Auto Scaling Group
+Parameters:
+
+    JenkinsMasterclusterName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+        Default: ANUPAM_dev_Jenkins
+        
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+        Default: dev
+
+    MasterInstanceType: 
+        Description: Which instance type should we use to build the ECS cluster?
+        Type: String
+        Default: t2.micro
+
+    MasterClusterSize:
+        Description: How many ECS hosts do you want to initially deploy?
+        Type: Number
+        Default: 1
+
+    VPC:
+        Description: Choose which VPC this ECS cluster should be deployed to
+        Type: AWS::EC2::VPC::Id
+        Default: vpc-e9513481
+
+    Subnets:
+        Description: Choose which subnets this ECS cluster should be deployed to
+        Type: List<AWS::EC2::Subnet::Id>
+        Default: subnet-7183240b
+
+    SecurityGroup:
+        Description: Select the Security Group to use for the ECS cluster hosts
+        Type: AWS::EC2::SecurityGroup::Id
+        Default: sg-122a8a78
+        
+    InfrastructureAMIId:
+        Description: The AMI Fetched From Infrastructure (default redhat ami-49f0762d)
+        Type: String
+        Default: ami-06079a18c05730d40 
+
+    KeyPair: 
+        Description: Name of an existing EC2 KeyPair to enable SSH access to the ECS instances
+        Type: AWS::EC2::KeyPair::KeyName
+        Default: canada_key
+
+    AvailabilityZones:
+        Type: String
+        Default: ca-central-1b
+        
+    VolumeId:
+        Description: The ID of the EBS volume that you want ot attach to your instance.
+        Type: String
+        Default: 'vol-06ce286891e0e83a4'
+
+
+Resources:
+
+    ECSCluster:
+        Type: AWS::ECS::Cluster
+        Properties:
+            ClusterName: !Ref JenkinsMasterclusterName
+
+    ECSAutoScalingGroup:
+        DependsOn: ECSCluster
+        Type: AWS::AutoScaling::AutoScalingGroup
+        Properties: 
+            AvailabilityZones: 
+                 - !Ref AvailabilityZones
+            VPCZoneIdentifier: !Ref Subnets
+            LaunchConfigurationName: !Ref ECSLaunchConfiguration
+            MinSize: !Ref MasterClusterSize
+            MaxSize: 2  
+            DesiredCapacity: !Ref MasterClusterSize
+            MetricsCollection: 
+              - Granularity: "1Minute"
+            Tags: 
+                - Key: Name
+                  Value: !Sub ANUPAM ${EnvironmentName} Jenkins Master host
+                  PropagateAtLaunch: true
+        CreationPolicy:
+            ResourceSignal: 
+                Timeout: PT60M
+        UpdatePolicy:
+            AutoScalingRollingUpdate:
+                MinInstancesInService: 1
+                MaxBatchSize: 1
+                PauseTime: PT60M
+                WaitOnResourceSignals: true
+
+        
+    ECSLaunchConfiguration:
+        Type: AWS::AutoScaling::LaunchConfiguration 
+        Properties:
+            AssociatePublicIpAddress: true
+            ImageId:  !Ref InfrastructureAMIId
+            InstanceType: !Ref MasterInstanceType
+            SecurityGroups: 
+                - !Ref SecurityGroup
+            IamInstanceProfile: ECSRole
+            KeyName: !Ref KeyPair
+            UserData: 
+                "Fn::Base64": !Sub |
+                    #!/bin/bash
+                    sudo su -
+                    aws configure set default.region ca-central-1
+                    ## START CLOUDWATCH AGENT
+                    systemctl start amazon-cloudwatch-agent.service
+                    yum update -y
+                    echo "ECS_CLUSTER=${ECSCluster}" >> /etc/ecs/ecs.config
+                    easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+                    ln /opt/aws/bin/cfn-hup /etc/init.d/
+                    initctl reload-configuration
+                    chmod 700 /etc/init.d/cfn-hup
+                    chown root:root /etc/init.d/cfn-hup
+                    update-rc.d cfn-hup defaults
+                    update-rc.d cfn-hup enable
+                    /opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
+                    ### ATTACH EXISTING VOLUME
+                    my_instance_id=$(curl -s http://instance-data/latest/meta-data/instance-id)
+                    echo "instance id is printed here: "
+                    echo $my_instance_id
+                    aws ec2 attach-volume --volume-id ${VolumeId} --instance-id $my_instance_id --device /dev/sdf
+                    DATA_STATE="unknown"
+                    until [ "$DATA_STATE" == "attached" ]
+                    do
+                        DATA_STATE=$(aws ec2 describe-volumes --filters Name=attachment.instance-id,Values=$my_instance_id Name=attachment.device,Values=/dev/sdf Name=attachment.status,Values=attached --query Volumes[].Attachments[].State --output text)
+                        sleep 5
+                    done
+                    echo "jenkins home attached"
+                    ## Mount The volume to the folder
+                    sudo mkdir /newvolume
+                    sudo mount /dev/xvdf /newvolume/
+                    # ASSOCIATE ELASTIC IP ADDRESS
+                    aws ec2 associate-address --instance-id $my_instance_id --public-ip 35.182.6.25
+                    ## SIGNAL COMPLETE !
+                    /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource ECSAutoScalingGroup --region ${AWS::Region}
+
+
+
+        Metadata:
+          AWS::CloudFormation::Init:
+            config:
+              files:
+                "/etc/cfn/cfn-hup.conf":
+                  mode: 000400
+                  owner: root
+                  group: root
+                  content: !Sub |
+                    [main]
+                    stack=${AWS::StackId}
+                    region=${AWS::Region}
+                "/etc/cfn/hooks.d/cfn-auto-reloader.conf":
+                  content: !Sub |
+                    [cfn-auto-reloader-hook]
+                    triggers=post.update
+                    path=Resources.ECSLaunchConfiguration.Metadata.AWS::CloudFormation::Init
+                    action=/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
+                "/lib/systemd/system/cfn-hup.service":
+                  content:
+                    Fn::Join:
+                    - ''
+                    - - "[Unit]\n"
+                      - "Description=cfn-hup daemon\n\n"
+                      - "[Service]\n"
+                      - 'Type=simple'
+                      - 'ExecStart=/opt/aws/bin/cfn-hup'
+                      - "Restart=always\n\n"
+                      - "[Install]\n"
+                      - WantedBy=multi-user.target
+              commands:
+                01enable_cfn_hup:
+                  command: systemctl enable cfn-hup.service
+                02start_cfn_hup:
+                  command: systemctl start cfn-hup.service
+        
+Outputs:
+
+    Cluster:
+        Description: A reference to the ECS cluster
+        Value: !Ref ECSCluster

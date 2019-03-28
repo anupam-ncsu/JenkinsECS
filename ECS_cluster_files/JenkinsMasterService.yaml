@@ -1,0 +1,73 @@
+Description: 
+    This Stack produces a service for Jenkins Master. 
+
+Parameters: 
+
+    VPC:
+        Description: The VPC that the Service is deployed to
+        Type: AWS::EC2::VPC::Id
+        Default: vpc-e9513481
+        
+    Cluster:
+        Description: Please provide the ECS Cluster ID that this service should run on
+        Type: String
+        Default: ANUPAM_dev_Jenkins
+
+    DesiredMasterCount: 
+        Description: How many instances of this task should we run across our cluster?
+        Type: Number
+        Default: 1
+        
+    DockerEnvironmentTag:
+        Description: The tag of the image which is relevant to the given environment 
+        Type: String
+        Default: dev
+
+Resources:
+
+    ServicesJenkinsMaster: 
+        Type: AWS::ECS::Service
+        Properties: 
+            Cluster: !Ref Cluster
+            DesiredCount: !Ref DesiredMasterCount
+            DeploymentConfiguration:
+              MaximumPercent: 100
+              MinimumHealthyPercent: 50            
+            PlacementConstraints: 
+                - Type: distinctInstance 
+            TaskDefinition: !Ref TaskDefinition
+
+
+    TaskDefinition:
+        Type: AWS::ECS::TaskDefinition
+        Properties:
+            Family: jenkins-master-service
+            NetworkMode: host
+            Volumes: 
+                - Host:
+                    SourcePath: '/newvolume'
+                  Name: newvolume                            
+            ContainerDefinitions:                         
+                - Name: jenkins-master
+                  Essential: true
+                  Image: !Sub 952408268520.dkr.ecr.ca-central-1.amazonaws.com/jenkinsdocker        
+                  Memory: 512                                                                                                                                                                                                                
+                  PortMappings:
+                    - ContainerPort: 8080 
+                      HostPort: 8080                     
+                    - ContainerPort: 50000 
+                      HostPort: 50000  
+                  MountPoints: 
+                    - SourceVolume: newvolume
+                      ContainerPath: /var/jenkins_home                                                         
+                  LogConfiguration:
+                    LogDriver: awslogs
+                    Options:
+                        awslogs-group: !Sub anupam-jenkins-master-${DockerEnvironmentTag}
+                        awslogs-region: !Ref AWS::Region
+    
+    CloudWatchLogsGroup:
+        Type: AWS::Logs::LogGroup
+        Properties: 
+            LogGroupName: !Sub anupam-jenkins-master-${DockerEnvironmentTag}
+            RetentionInDays: 365 

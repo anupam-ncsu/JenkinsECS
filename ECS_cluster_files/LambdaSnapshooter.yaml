@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CFN template to create a lambda and a event to trigger lambda at a certain frequency'
+
+Parameters:
+    EnvName:
+        Type: String
+        Description: 'Name of an environment. ''dev'', ''staging'', ''prod'' and any name.'
+        Default: dev
+    LambdaServiceRole:
+        Type: String
+        Description: 'role of lambda for snapshotting'
+        Default: 'arn:aws:iam::952408268520:role/service-role/abs-snapshot-role-xznsj5je'
+    VolumeID:
+        Type: String
+        Description: 'Volume to be snapshotted'
+        Default: vol-06ce286891e0e83a4
+        
+    rateOfMakingSnapshot:
+       Type: String
+       Description: 'what is the frequency of making snapshots'
+       Default: 'rate(1 minute)'
+       
+    SnapshotRegion:
+       Type: String
+       Description: ' Region in which your EBS snapshot is stored'
+       Default: 'ca-central-1'
+       
+    applicationName: 
+      Type: String
+      Description: 'Name of the application to tag the volume snapshot with'
+      Default: 'JenkinsMasterVolumeSnapshotBackup'
+              
+        
+Resources: 
+
+    ScheduledRuleForSnapshotCreation: 
+      DependsOn: LambdaFunctiontoCreateSnapshot 
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "ScheduledRule for LambdaFunctiontoCreateSnapshot trigger"
+        ScheduleExpression: !Ref rateOfMakingSnapshot
+        State: "ENABLED"
+        Targets: 
+            - Arn: !GetAtt 
+                - LambdaFunctiontoCreateSnapshot
+                - Arn
+              Id: LambdaFunctiontoCreateSnapshot
+
+            
+    PermissionForEventsToInvokeSnapshotCreationLambda: 
+      DependsOn: ScheduledRuleForSnapshotCreation
+      Type: AWS::Lambda::Permission
+      Properties: 
+        FunctionName: !Ref LambdaFunctiontoCreateSnapshot
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "ScheduledRuleForSnapshotCreation"
+            - "Arn"                      
+            
+    LambdaFunctiontoCreateSnapshot:
+       Type: AWS::Lambda::Function
+       Properties:
+         FunctionName:
+           Fn::Sub: EBS-snapshooter-lambda-function-${EnvName}
+         Runtime: python2.7
+         Code:
+           ZipFile: |
+               import boto3;
+               import datetime;
+               import os;
+               
+               def lambda_handler(event, context):
+                   ec2 = boto3.client('ec2')
+                   ts = datetime.datetime.now()
+                   volumeID = os.environ['volumeID'] #"vol-06ce286891e0e83a4"
+                   applicationName = os.environ['applicationName']
+                   reg = "ca-central-1"
+                   print "Backing up Jenkins Cluster state from %s at %s" % ( volumeID , datetime.datetime.now())
+                   # do snapshot and tag it !
+                   result = ec2.create_snapshot(
+                            VolumeId=volumeID,
+                            Description='Snapshot Jenkins Master State for '+ts.strftime("%m/%d/%Y, %H:%M:%S"),
+                            TagSpecifications=[{ 
+                                'ResourceType': 'snapshot',
+                                'Tags': [{
+                    					'Key': 'Application',
+                    					'Value': applicationName },
+                    					{
+                    	                'Key': 'Creation Time',
+                    	                'Value': ts.strftime("%m/%d/%Y, %H:%M:%S") }]
+                    	                 }]
+                                               )
+                   # Get snapshot resource 
+                   snapshotId = result['SnapshotId']
+                   print "Snapshot id %s" % (snapshotId)
+                
+         Handler: index.lambda_handler
+         MemorySize: 128
+         Timeout: 10
+         Role: !Ref LambdaServiceRole
+         Environment:
+           Variables:
+              volumeID: !Ref VolumeID
+              applicationName: !Ref applicationName
+              
+              

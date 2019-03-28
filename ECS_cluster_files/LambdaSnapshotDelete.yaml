@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CFN template to create a lambda and a event to trigger lambda at a certain frequency'
+
+Parameters:
+    EnvName:
+        Type: String
+        Description: 'Name of an environment. ''dev'', ''staging'', ''prod'' and any name.'
+        Default: dev
+    LambdaServiceRole:
+        Type: String
+        Description: 'role of lambda for snapshotting'
+        Default: 'arn:aws:iam::952408268520:role/service-role/abs-snapshot-role-xznsj5je'
+    VolumeID:
+        Type: String
+        Description: 'Volume to be snapshotted'
+        Default: vol-06ce286891e0e83a4
+        
+    numberOfSnapshotsToRetain:
+       Type: Number
+       Description: 'How many snapshots do you want to retain as backup'
+       Default: 5
+       
+    SnapshotRegion:
+       Type: String
+       Description: ' Region in which your EBS snapshot is stored'
+       Default: 'ca-central-1'
+       
+    applicationName: 
+      Type: String
+      Description: 'Name of the application to tag the volume snapshot with'
+      Default: 'JenkinsMasterVolumeSnapshotBackup'  
+      
+    rateOfDeletingSnapshot:
+       Type: String
+       Description: 'what is the frequency of checking for older snapshot'
+       Default: 'rate(10 minutes)'           
+        
+Resources: 
+            
+    ScheduledRuleForSnapshotDeletion: 
+      DependsOn: LambdaFunctionToDeleteSnapshot 
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "ScheduledRule for LambdaFunctionToDeleteSnapshot trigger"
+        ScheduleExpression: !Ref rateOfDeletingSnapshot
+        State: "ENABLED"
+        Targets: 
+            - Arn: !GetAtt 
+                - LambdaFunctionToDeleteSnapshot
+                - Arn
+              Id: LambdaFunctionToDeleteSnapshot
+
+            
+    PermissionForEventsToInvokeSnapshotDeletionLambda: 
+      DependsOn: ScheduledRuleForSnapshotDeletion
+      Type: AWS::Lambda::Permission
+      Properties: 
+        FunctionName: !Ref LambdaFunctionToDeleteSnapshot
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "ScheduledRuleForSnapshotDeletion"
+            - "Arn"            
+                    
+    LambdaFunctionToDeleteSnapshot:
+       Type: AWS::Lambda::Function
+       Properties: 
+         FunctionName:
+           Fn::Sub: EBS-snapshotDeleter-lambda-function-${EnvName}
+         Runtime: python2.7
+         Code:
+           ZipFile: |
+               import boto3;
+               import datetime;
+               import os;
+               import operator;
+               
+               def delete_snapshot(snapshot_id, reg):
+                   print "Deleting snapshot %s " % (snapshot_id)
+                   try:  
+                       ec2resource = boto3.resource('ec2', region_name=reg)
+                       snapshot = ec2resource.Snapshot(snapshot_id)
+                       snapshot.delete()
+                   except ClientError as e:
+                       print "Caught exception: %s" % e
+                   return
+               
+               def lambda_handler(event, context):
+                   ec2 = boto3.client('ec2')
+                   ts = datetime.datetime.now()
+                   volumeID = os.environ['volumeID']
+                   applicationName = os.environ['applicationName']
+                   SnapshopTagKey = 'JenkinsMasterVolumeSnapshotBackup'
+                   reg = os.environ['SnapshotRegion']
+                   numberOfSnapshotsToRetain = os.environ['numberOfSnapshotsToRetain']
+                   print "Deleting older snapshots from %s at %s" % ( volumeID , datetime.datetime.now())
+                   # do snapshot
+                   result = ec2.describe_snapshots( Filters=[
+                      {
+                           'Name': 'tag:Application',
+                           'Values': [applicationName]
+                       },
+                   ] )
+                   for snapshot in result['Snapshots']:
+                       print "Checking snapshot %s which was created on %s" % (snapshot['SnapshotId'],snapshot['StartTime'])
+                   length = len(result['Snapshots'])
+                   print length
+                   # Sort snapshots by creation time and delete the oldest x numbers
+                   for snapshot in (sorted(result['Snapshots'], key=lambda k: k['StartTime'])):
+                       print "Checking age of snapshot %s which was created on %s" % (snapshot['SnapshotId'],snapshot['StartTime'])
+                       if (length >numberOfSnapshotsToRetain):
+                           print " snapshot %s is  OLD which was created on %s. DELETING !" % (snapshot['SnapshotId'],snapshot['StartTime'])
+                           delete_snapshot(snapshot['SnapshotId'], reg)
+                           length = length -1
+                       else:
+                           print ("Not an OLD snapshots. Number of snapshot to retian set to "+ str(numberOfSnapshotsToRetain))
+                
+         Handler: index.lambda_handler
+         MemorySize: 128
+         Timeout: 10
+         Role: !Ref LambdaServiceRole
+         Environment:
+            Variables:
+               volumeID: !Ref VolumeID
+               numberOfSnapshotsToRetain: !Ref numberOfSnapshotsToRetain
+               SnapshotRegion: !Ref SnapshotRegion
+               applicationName: !Ref applicationName
+              

@@ -1,0 +1,123 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ecs:CreateCluster",
+                "ecs:DeregisterContainerInstance",
+                "ecs:DiscoverPollEndpoint",
+                "ecs:Poll",
+                "ecs:RegisterContainerInstance",
+                "ecs:StartTelemetrySession",
+                "ecs:UpdateContainerInstancesState",
+                "ecs:Submit*",
+                "ecs:StopTask",
+                "ecs:ListContainerInstances",
+                "ecs:DescribeTasks",
+                "ecs:RunTask",
+                "ecs:RegisterTaskDefinition",
+                "ecs:ListClusters",
+                "ecs:DescribeContainerInstances",
+                "ecs:ListTaskDefinitions",
+                "ecs:DescribeTaskDefinition",
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchGetImage",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "*"
+        },        {
+            "Sid": "Stmt1477803259000",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:GetAutomationExecution",
+                "ssm:GetParameters",
+                "ssm:ListCommands",
+                "ssm:SendCommand",
+                "ssm:StartAutomationExecution"
+            ],
+            "Resource": [
+                "*"
+            ]
+        },
+        {
+            "Sid": "Stmt1477803259002",
+            "Effect": "Allow",
+            "Action": [
+                "states:DescribeExecution",
+                "states:StartExecution"
+            ],
+            "Resource": [
+                "arn:aws:states:*:*:stateMachine:SSM*",
+                "arn:aws:states:*:*:execution:SSM*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:PutMetricData",
+                "ds:CreateComputer",
+                "ds:DescribeDirectories",
+                "ec2:DescribeInstanceStatus",
+                "logs:*",
+                "ssm:*",
+                "ec2messages:*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "iam:CreateServiceLinkedRole",
+            "Resource": "arn:aws:iam::*:role/aws-service-role/ssm.amazonaws.com/AWSServiceRoleForAmazonSSM*",
+            "Condition": {
+                "StringLike": {
+                    "iam:AWSServiceName": "ssm.amazonaws.com"
+                }
+            }
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "iam:DeleteServiceLinkedRole",
+                "iam:GetServiceLinkedRoleDeletionStatus"
+            ],
+            "Resource": "arn:aws:iam::*:role/aws-service-role/ssm.amazonaws.com/AWSServiceRoleForAmazonSSM*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ecs:CreateCluster",
+                "ecs:DeregisterContainerInstance",
+                "ecs:DiscoverPollEndpoint",
+                "ecs:Poll",
+                "ecs:RegisterContainerInstance",
+                "ecs:StartTelemetrySession",
+                "ecs:Submit*",
+                "ecs:DescribeServices",
+                "ecs:UpdateService",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:GetAuthorizationToken",
+                "s3:*",
+                "ec2:DescribeInstances",
+                "logs:CreateLogGroup",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+                "cloudwatch:PutMetricData",
+                "cloudwatch:GetMetricStatistics",
+                "cloudwatch:ListMetrics",
+                "cloudwatch:DescribeAlarms",
+                "ec2:*",
+                "application-autoscaling:*",
+                "cloudformation:SignalResource"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

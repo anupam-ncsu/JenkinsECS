@@ -1,0 +1,200 @@
+
+Description: >
+    This template deploys a 
+    Last Modified: 10th May 2017
+    Author: Anupam
+    
+Parameters:
+
+    CloudFormationTemplateS3UrlBasePath: 
+        Description: Where are the CloudFormation Templates ?
+        Type: String
+        Default: https://s3.ca-central-1.amazonaws.com/anupamjenkinscloudformation   
+
+############################### Master Cluster parameters
+
+    JenkinsMasterclusterName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+        Default: ANUPAM_dev_Jenkins
+
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+        Default: dev
+
+    MasterInstanceType: 
+        Description: Which instance type should we use to build the ECS cluster?
+        Type: String
+        Default: t2.micro
+
+    MasterClusterSize:
+        Description: How many ECS hosts do you want to initially deploy?
+        Type: Number
+        Default: 1
+
+    VPC:
+        Description: Choose which VPC this ECS cluster should be deployed to
+        Type: AWS::EC2::VPC::Id
+        Default: vpc-e9513481
+
+    Subnets:
+        Description: Choose which subnets this ECS cluster should be deployed to
+        Type: String
+        Default: subnet-7183240b
+
+    SecurityGroup:
+        Description: Select the Security Group to use for the ECS cluster hosts
+        Type: String
+        Default: sg-122a8a78
+        
+    InfrastructureAMIId:
+        Description: The AMI Fetched From Infrastructure (default redhat ami-49f0762d)
+        Type: String
+        Default: ami-06079a18c05730d40 
+
+    KeyPair: 
+        Description: Name of an existing EC2 KeyPair to enable SSH access to the ECS instances
+        Type: AWS::EC2::KeyPair::KeyName
+        Default: canada_key
+
+    AvailabilityZones:
+        Type: String
+        Default: ca-central-1b
+        
+    Region:
+        Type: String
+        Default: 'ca-central-1'
+        
+############################### Slave cluster parameters
+
+    SlaveInstanceType: 
+        Description: Which instance type should we use to build the ECS cluster?
+        Type: String
+        Default: t2.medium
+
+    SlaveClusterSize:
+        Description: How many ECS hosts do you want to initially deploy?
+        Type: Number
+        Default: 1           
+
+############################### Master Service parameters
+
+    DesiredMasterCount: 
+        Description: How many instances of this task should we run across our cluster?
+        Type: Number
+        Default: 1
+
+############################## Lambda functions
+
+    EnvName:
+        Type: String
+        Description: Name of an environment. 'dev', 'staging', 'prod' and any name.
+        Default: dev
+    
+    LambdaServiceRole:
+        Type: String
+        Description: role of lambda for snapshotting
+        Default: arn:aws:iam::952408268520:role/service-role/abs-snapshot-role-xznsj5je
+    
+    VolumeID: 
+        Type: String
+        Description: Volume to be snapshotted
+        Default: vol-06ce286891e0e83a4
+        
+    numberOfSnapshotsToRetain:
+       Type: Number
+       Description: 'How many snapshots do you want to retain as backup'
+       Default: 5
+       
+    applicationName: 
+      Type: String
+      Description: 'Name of the application to tag the volume snapshot with'
+      Default: JenkinsMasterVolumeSnapshotBackup   
+      
+    rateOfMakingSnapshot:
+       Type: String
+       Description: 'what is the frequency of making snapshots'
+       Default: 'rate(1 minute)'  
+       
+    rateOfDeletingSnapshot:
+       Type: String
+       Description: 'what is the frequency of checking for older snapshot'
+       Default: 'rate(10 minutes)'                 
+        
+Resources:
+
+    ECSClusterForJenkinsMaster:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: !Sub ${CloudFormationTemplateS3UrlBasePath}/JenkinsMasterCluster.yaml
+            Parameters:
+                  JenkinsMasterclusterName: !Ref JenkinsMasterclusterName
+                  EnvironmentName: !Ref EnvironmentName
+                  MasterInstanceType: !Ref MasterInstanceType
+                  MasterClusterSize: !Ref MasterClusterSize
+                  VPC: !Ref VPC
+                  Subnets: !Join [ ":", [ !Ref Subnets ] ]
+                  SecurityGroup: !Join [ ":", [ !Ref SecurityGroup ] ]
+                  InfrastructureAMIId: !Ref InfrastructureAMIId
+                  KeyPair: !Ref KeyPair
+                  AvailabilityZones: !Ref AvailabilityZones
+                  VolumeId: !Ref VolumeID
+
+                  
+                
+                
+    ECSClusterForJenkinsSlave:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: !Sub ${CloudFormationTemplateS3UrlBasePath}/JenkinsSlaveCluster.yaml
+            Parameters:
+                   EnvironmentName: !Ref EnvironmentName
+                   SlaveInstanceType: !Ref SlaveInstanceType
+                   SlaveClusterSize: !Ref SlaveClusterSize
+                   VPC: !Ref VPC
+                   Subnets: !Ref Subnets
+                   SecurityGroup: !Ref SecurityGroup
+                   InfrastructureAMIId: !Ref InfrastructureAMIId
+                   KeyPair: !Ref KeyPair
+                   AvailabilityZones: !Ref AvailabilityZones     
+                   
+                   
+    ECSServiceDefinationForJenkinsMaster:
+        DependsOn: ECSClusterForJenkinsMaster
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: !Sub ${CloudFormationTemplateS3UrlBasePath}/JenkinsMasterService.yaml
+            Parameters:
+                       VPC: !Ref VPC    
+                       Cluster: !Ref JenkinsMasterclusterName
+                       DesiredMasterCount: !Ref DesiredMasterCount
+                       DockerEnvironmentTag: !Ref EnvironmentName   
+                       
+    EBSVolumeSnapShoterLambda:
+        DependsOn: ECSServiceDefinationForJenkinsMaster
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: !Sub ${CloudFormationTemplateS3UrlBasePath}/LambdaSnapshooter.yaml
+            Parameters:
+                       EnvName: !Ref EnvironmentName    
+                       LambdaServiceRole: !Ref LambdaServiceRole
+                       VolumeID: !Ref VolumeID  
+                       rateOfMakingSnapshot: !Ref rateOfMakingSnapshot
+                       SnapshotRegion:  !Ref Region 
+                       applicationName: !Ref applicationName    
+                       
+    EBSVolumeSnapShotDeleteLambda:
+        DependsOn: ECSServiceDefinationForJenkinsMaster
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: !Sub ${CloudFormationTemplateS3UrlBasePath}/LambdaSnapshotDelete.yaml
+            Parameters:
+                       EnvName: !Ref EnvironmentName    
+                       LambdaServiceRole: !Ref LambdaServiceRole
+                       VolumeID: !Ref VolumeID  
+                       numberOfSnapshotsToRetain: !Ref numberOfSnapshotsToRetain
+                       SnapshotRegion:  !Ref Region  
+                       applicationName: !Ref applicationName   
+                       rateOfDeletingSnapshot: !Ref rateOfDeletingSnapshot                                                              
+              
